@@ -1,3 +1,5 @@
+import { Link } from "react-router";
+
 export default function Signup() {
   const inputClass =
     "w-full min-w-0 rounded-lg border border-[#e4cce7] bg-white px-3 py-2 text-sm text-[#3c2941] focus:outline-none focus:ring-2 focus:ring-[#73457d]";
@@ -262,9 +264,9 @@ export default function Signup() {
         <footer className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs">
             Already have an account?{" "}
-            <button type="button" className="font-semibold underline">
-              Log in
-            </button>
+           <Link to="/login" className="font-semibold underline">
+                Log in
+           </Link>
           </p>
 
           <button
