@@ -1,6 +1,23 @@
+import { useState } from "react";
+import type { FormEvent } from "react";
 import { Link } from "react-router";
+import { FirebaseError } from "firebase/app";
+import {
+  createUserWithEmailAndPassword,
+  validatePassword,
+} from "firebase/auth";
+import {
+  doc,
+  runTransaction,
+  serverTimestamp,
+} from "firebase/firestore";
+import { auth, db } from "../firebaseConfig";
 
 export default function Signup() {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
   const inputClass =
     "w-full min-w-0 rounded-lg border border-[#e4cce7] bg-white px-3 py-2 text-sm text-[#3c2941] focus:outline-none focus:ring-2 focus:ring-[#73457d]";
 
@@ -23,11 +40,202 @@ export default function Signup() {
     { name: "Evening", hours: "5 PM – 8 PM" },
   ];
 
+  async function handleSignup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (saving || success) {
+      return;
+    }
+
+    setError("");
+
+    // Read the values entered in the form.
+    const formData = new FormData(event.currentTarget);
+
+    const firstName = String(formData.get("firstName") ?? "").trim();
+    const lastName = String(formData.get("lastName") ?? "").trim();
+    const email = String(formData.get("email") ?? "").trim();
+    const password = String(formData.get("password") ?? "");
+    const role = String(formData.get("role") ?? "");
+    const phone = String(formData.get("phone") ?? "").trim();
+    const dateOfBirth = String(formData.get("dateOfBirth") ?? "");
+    const communication = String(formData.get("communication") ?? "");
+    const availability = formData.getAll("availability").map(String);
+
+    // Validate the names.
+    if (
+      !firstName ||
+      !lastName ||
+      firstName.length > 100 ||
+      lastName.length > 100
+    ) {
+      setError("Enter a first and last name, each up to 100 characters.");
+      return;
+    }
+
+    // Only mentor and mentee are allowed during signup.
+    if (role !== "mentor" && role !== "mentee") {
+      setError("Select Mentor or Mentee.");
+      return;
+    }
+
+    // Match the limits in our Firestore rules.
+    if (
+      phone.length > 30 ||
+      dateOfBirth.length > 10 ||
+      availability.length > 21 ||
+      !["", "email", "phone", "text"].includes(communication)
+    ) {
+      setError("Check your contact details and availability.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      // Wait for Firebase to restore any existing session.
+      await auth.authStateReady();
+
+      let user = auth.currentUser;
+
+      if (
+        user &&
+        user.email?.toLowerCase() !== email.toLowerCase()
+      ) {
+        setError(
+          "Another account is signed in. Sign out before registering."
+        );
+        return;
+      }
+
+      // Create the account if the user is not already signed in.
+      // Reusing the signed-in account lets us retry a failed profile save.
+      if (!user) {
+        const status = await validatePassword(auth, password);
+
+        if (!status.isValid) {
+          const limits = status.passwordPolicy.customStrengthOptions;
+          const missing: string[] = [];
+
+          if (status.meetsMinPasswordLength === false) {
+            missing.push(
+              `at least ${limits.minPasswordLength} characters`
+            );
+          }
+
+          if (status.meetsMaxPasswordLength === false) {
+            missing.push(
+              `no more than ${limits.maxPasswordLength} characters`
+            );
+          }
+
+          if (status.containsLowercaseLetter === false) {
+            missing.push("a lowercase letter");
+          }
+
+          if (status.containsUppercaseLetter === false) {
+            missing.push("an uppercase letter");
+          }
+
+          if (status.containsNumericCharacter === false) {
+            missing.push("a number");
+          }
+
+          if (status.containsNonAlphanumericCharacter === false) {
+            missing.push("an allowed symbol");
+          }
+
+          setError(
+            missing.length > 0
+              ? `Your password needs: ${missing.join(", ")}.`
+              : "Choose a stronger password."
+          );
+
+          return;
+        }
+
+        const result = await createUserWithEmailAndPassword(
+          auth,
+          email,
+          password
+        );
+
+        user = result.user;
+      }
+
+      // Use the Firebase account's UID as the profile document ID.
+      const profileRef = doc(db, "users", user.uid);
+
+      // Passwords are never included in the Firestore profile.
+      const profileData = {
+        firstName,
+        lastName,
+        email: user.email,
+        role,
+        phone,
+        dateOfBirth,
+        communication,
+        availability,
+        createdAt: serverTimestamp(),
+      };
+
+      // Create the profile only if it does not already exist.
+      const createdProfile = await runTransaction(
+        db,
+        async (transaction) => {
+          const existingProfile = await transaction.get(profileRef);
+
+          if (existingProfile.exists()) {
+            return false;
+          }
+
+          transaction.set(profileRef, profileData);
+          return true;
+        }
+      );
+
+      setSuccess(
+        createdProfile
+          ? "Your account and profile were created successfully."
+          : "Your account already has a saved profile."
+      );
+    } catch (cause) {
+      console.error("Signup failed:", cause);
+
+      if (
+        auth.currentUser?.email?.toLowerCase() === email.toLowerCase()
+      ) {
+        setError(
+          "Your account exists, but we couldn't confirm your profile was saved. Try Create Account again."
+        );
+      } else if (
+        cause instanceof FirebaseError &&
+        cause.code === "auth/email-already-in-use"
+      ) {
+        setError("This email already has an account. Use Log in.");
+      } else if (
+        cause instanceof FirebaseError &&
+        cause.code === "auth/network-request-failed"
+      ) {
+        setError("Check your internet connection and try again.");
+      } else if (
+        cause instanceof FirebaseError &&
+        cause.code === "auth/too-many-requests"
+      ) {
+        setError("Too many attempts. Please wait and try again.");
+      } else {
+        setError("Unable to complete signup. Please try again.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-[#f1def1] p-4 text-left text-[#3c2941] [color-scheme:light] sm:p-8">
       {/* Page heading */}
       <header className="mb-6 flex items-center gap-4">
-        {/* Text placeholder until we add the actual logo */}
+        {/* Placeholder until the actual logo is added */}
         <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-[#3c2941] text-center text-xs font-semibold text-white">
           RESTORE
           <br />
@@ -39,10 +247,7 @@ export default function Signup() {
         </h1>
       </header>
 
-      <form
-        className="space-y-6"
-        onSubmit={(event) => event.preventDefault()}
-      >
+      <form className="space-y-6" onSubmit={handleSignup}>
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
           {/* Personal details */}
           <section
@@ -61,11 +266,13 @@ export default function Signup() {
                 <label htmlFor="firstName" className={labelClass}>
                   First name
                 </label>
+
                 <input
                   id="firstName"
                   name="firstName"
                   type="text"
                   autoComplete="given-name"
+                  maxLength={100}
                   className={inputClass}
                   required
                 />
@@ -75,11 +282,13 @@ export default function Signup() {
                 <label htmlFor="lastName" className={labelClass}>
                   Last name
                 </label>
+
                 <input
                   id="lastName"
                   name="lastName"
                   type="text"
                   autoComplete="family-name"
+                  maxLength={100}
                   className={inputClass}
                   required
                 />
@@ -89,6 +298,7 @@ export default function Signup() {
                 <label htmlFor="email" className={labelClass}>
                   Email address
                 </label>
+
                 <input
                   id="email"
                   name="email"
@@ -103,11 +313,13 @@ export default function Signup() {
                 <label htmlFor="phone" className={labelClass}>
                   Phone number
                 </label>
+
                 <input
                   id="phone"
                   name="phone"
                   type="tel"
                   autoComplete="tel"
+                  maxLength={30}
                   className={inputClass}
                 />
               </div>
@@ -116,6 +328,7 @@ export default function Signup() {
                 <label htmlFor="dateOfBirth" className={labelClass}>
                   Date of birth
                 </label>
+
                 <input
                   id="dateOfBirth"
                   name="dateOfBirth"
@@ -129,6 +342,7 @@ export default function Signup() {
                 <label htmlFor="communication" className={labelClass}>
                   Preferred communication
                 </label>
+
                 <select
                   id="communication"
                   name="communication"
@@ -148,6 +362,7 @@ export default function Signup() {
                 <label htmlFor="password" className={labelClass}>
                   Password
                 </label>
+
                 <input
                   id="password"
                   name="password"
@@ -163,6 +378,7 @@ export default function Signup() {
                 <label htmlFor="role" className={labelClass}>
                   Sign up as
                 </label>
+
                 <select
                   id="role"
                   name="role"
@@ -214,7 +430,10 @@ export default function Signup() {
                         scope="col"
                         className="p-2 text-center"
                       >
-                        <span className="block">{time.name}</span>
+                        <span className="block">
+                          {time.name}
+                        </span>
+
                         <span className="block text-[10px] font-normal">
                           {time.hours}
                         </span>
@@ -260,20 +479,38 @@ export default function Signup() {
           </section>
         </div>
 
-        {/* Navigation and account button */}
+        {/* Error and success messages */}
+        {error && (
+          <p role="alert" className="text-sm text-red-700">
+            {error}
+          </p>
+        )}
+
+        {success && (
+          <p role="status" className="text-sm text-green-800">
+            {success}
+          </p>
+        )}
+
+        {/* Login link and submit button */}
         <footer className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs">
             Already have an account?{" "}
-           <Link to="/login" className="font-semibold underline">
-                Log in
-           </Link>
+            <Link to="/login" className="font-semibold underline">
+              Log in
+            </Link>
           </p>
 
           <button
-            type="button"
-            className="w-full rounded-lg bg-[#b8dedb] px-8 py-3 text-sm font-semibold hover:bg-[#a5cfcc] sm:w-auto"
+            type="submit"
+            disabled={saving || success !== ""}
+            className="w-full rounded-lg bg-[#b8dedb] px-8 py-3 text-sm font-semibold hover:bg-[#a5cfcc] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
           >
-            CREATE ACCOUNT
+            {saving
+              ? "SAVING..."
+              : success
+                ? "ACCOUNT READY"
+                : "CREATE ACCOUNT"}
           </button>
         </footer>
       </form>
