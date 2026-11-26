@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 // import { useNavigate } from "react-router";
 import ActionCard from '../components/ActionCard'; 
 import GoalCompleteCard from "../components/GoalCompleteCard";
-import NavBar from "../components/NavBar";
+//import NavBar from "../components/NavBar";
 
 // interface CardTemplate {
 //     id: 'meeting' | 'add' | 'update';

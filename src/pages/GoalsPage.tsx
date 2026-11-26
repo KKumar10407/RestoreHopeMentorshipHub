@@ -1,4 +1,4 @@
-import NavBar from "../components/NavBar";
+//import NavBar from "../components/NavBar";
 import GoalCompleteGraph from "../components/GoalCompleteGraph";
 
 interface Goal {
